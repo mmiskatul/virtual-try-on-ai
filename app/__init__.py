@@ -5,6 +5,8 @@ from fastapi.staticfiles import StaticFiles
 
 from .core.config import settings
 from .core.sanitizer import InputSanitizerMiddleware
+from .core.rate_limiter import RateLimiterMiddleware
+from .core.cors_config import CORS_ORIGIN_REGEX, ALLOWED_METHODS, ALLOWED_HEADERS, EXPOSED_HEADERS
 from .adapters.registry import ModelRegistry
 from .services.job_queue import JobManager
 from .api.routes.health import create_health_router
@@ -19,14 +21,21 @@ def create_app() -> FastAPI:
         version=settings.version,
     )
 
+    # 1. Application-level Sliding-Window Rate Limiting Middleware
+    app.add_middleware(RateLimiterMiddleware)
+
+    # 2. Boundary Input Validation & Sanitization Middleware
     app.add_middleware(InputSanitizerMiddleware)
 
+    # 3. Strict CORS Middleware
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origin_regex=CORS_ORIGIN_REGEX,
         allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=ALLOWED_METHODS,
+        allow_headers=ALLOWED_HEADERS,
+        expose_headers=EXPOSED_HEADERS,
+        max_age=86400,
     )
 
     # Core singletons

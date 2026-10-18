@@ -141,7 +141,62 @@ async def run_tests():
     assert traversal_form_data["detail"]["code"] == "INJECTION_ATTACK_DETECTED_PATH_TRAVERSAL"
     print("[PASS] HTTP Test 7: Boundary Path Traversal Rejection in Filename OK")
 
-    print("\nALL AI-SERVICE TESTS (CORE + BOUNDARY SECURITY) PASSED SUCCESSFULLY! (100% OK)")
+    # Test HTTP Test 8: Strict CORS Allowed Origin Preflight
+    cors_allow_res = client.options(
+        "/api/v1/models",
+        headers={
+            "origin": "http://localhost:3000",
+            "access-control-request-method": "GET",
+        }
+    )
+    assert cors_allow_res.status_code == 200
+    assert cors_allow_res.headers.get("access-control-allow-origin") == "http://localhost:3000"
+    assert cors_allow_res.headers.get("access-control-allow-credentials") == "true"
+    print("[PASS] HTTP Test 8: Strict CORS Allowed Origin OK")
+
+    # Test HTTP Test 9: Strict CORS Disallowed Origin Preflight
+    cors_block_res = client.options(
+        "/api/v1/models",
+        headers={
+            "origin": "https://attacker-origin.evil",
+            "access-control-request-method": "GET",
+        }
+    )
+    assert cors_block_res.headers.get("access-control-allow-origin") is None
+    print("[PASS] HTTP Test 9: Strict CORS Disallowed Origin Blocked OK")
+
+    # Test HTTP Test 10: Rate Limiting Response Headers & Burst Exhaustion
+    models_res = client.get("/api/v1/models")
+    assert models_res.status_code == 200
+    assert "x-ratelimit-limit" in models_res.headers
+    assert "x-ratelimit-remaining" in models_res.headers
+    assert "x-ratelimit-reset" in models_res.headers
+
+    # Exhaust sensitive try-on rate limit using dedicated IP
+    test_burst_ip = "198.51.100.123"
+    hit_429 = False
+    for _ in range(25):
+        r = client.post(
+            "/api/v1/try-on/jobs",
+            data={"category": "tops"},
+            files={
+                "person_image": ("p.jpg", p_data, "image/jpeg"),
+                "garment_image": ("g.png", g_data, "image/png"),
+            },
+            headers={"x-forwarded-for": test_burst_ip}
+        )
+        if r.status_code == 429:
+            hit_429 = True
+            r_json = r.json()
+            assert r_json["code"] == "RATE_LIMIT_EXCEEDED"
+            assert "retry_after" in r_json
+            assert "retry-after" in r.headers
+            break
+
+    assert hit_429, "Rate limit burst must return HTTP 429"
+    print("[PASS] HTTP Test 10: Rate Limiting Headers & DDoS Protection (HTTP 429) Enforced OK")
+
+    print("\nALL AI-SERVICE TESTS (CORE + BOUNDARY SECURITY + CORS + RATE LIMITING) PASSED SUCCESSFULLY! (100% OK)")
 
 if __name__ == "__main__":
     asyncio.run(run_tests())
