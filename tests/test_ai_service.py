@@ -70,7 +70,78 @@ async def run_tests():
     assert metrics["total_completed"] == 1
     assert metrics["success_rate_percent"] == 100.0
     print(f"[PASS] AI Service Metrics: {metrics}")
-    print("\nALL AI-SERVICE TESTS PASSED SUCCESSFULLY! (100% OK)")
+
+    # Boundary Input Validation & Sanitization Tests (HTTP Boundary)
+    from fastapi.testclient import TestClient
+    from app import create_app
+
+    print("\n[TEST] Initializing FastAPI TestClient for Boundary Security Tests...")
+    fastapi_app = create_app()
+    client = TestClient(fastapi_app)
+
+    # Test HTTP Health Check
+    health_res = client.get("/health")
+    assert health_res.status_code == 200, f"Expected 200, got {health_res.status_code}"
+    print("[PASS] HTTP Test 1: Service Health Check OK")
+
+    # Test Boundary SQLi in Query Parameter
+    sqli_q_res = client.get("/api/v1/models?sort=' OR '1'='1")
+    assert sqli_q_res.status_code == 400
+    sqli_q_data = sqli_q_res.json()
+    assert sqli_q_data["code"] == "INJECTION_ATTACK_DETECTED_SQLI"
+    print("[PASS] HTTP Test 2: Boundary SQLi Rejection in Query Parameter OK")
+
+    # Test Boundary XSS in Route Path Parameter
+    xss_p_res = client.get("/api/v1/try-on/jobs/<script>alert(1)</script>")
+    assert xss_p_res.status_code == 400
+    xss_p_data = xss_p_res.json()
+    assert xss_p_data["code"] == "INJECTION_ATTACK_DETECTED_XSS"
+    print("[PASS] HTTP Test 3: Boundary XSS Rejection in Route Path Parameter OK")
+
+    # Test Boundary SQLi in HTTP Headers
+    sqli_h_res = client.get("/health", headers={"x-tracking-ref": "UNION SELECT * FROM users --"})
+    assert sqli_h_res.status_code == 400
+    sqli_h_data = sqli_h_res.json()
+    assert sqli_h_data["code"] == "INJECTION_ATTACK_DETECTED_SQLI"
+    print("[PASS] HTTP Test 4: Boundary SQLi Rejection in HTTP Headers OK")
+
+    # Test Boundary Null Byte in HTTP Headers
+    null_h_res = client.get("/health", headers={"x-custom-ref": "header\0byte"})
+    assert null_h_res.status_code == 400
+    null_h_data = null_h_res.json()
+    assert null_h_data["code"] == "INJECTION_ATTACK_DETECTED_NULL_BYTE"
+    print("[PASS] HTTP Test 5: Boundary Null Byte Rejection in HTTP Headers OK")
+
+    # Test Boundary SQLi in Multipart Form Field
+    p_data, g_data = create_dummy_images()
+    sqli_form_res = client.post(
+        "/api/v1/try-on/jobs",
+        data={"category": "tops' OR 1=1 --"},
+        files={
+            "person_image": ("person.jpg", p_data, "image/jpeg"),
+            "garment_image": ("garment.png", g_data, "image/png"),
+        }
+    )
+    assert sqli_form_res.status_code == 400
+    sqli_form_data = sqli_form_res.json()
+    assert sqli_form_data["detail"]["code"] == "INJECTION_ATTACK_DETECTED_SQLI"
+    print("[PASS] HTTP Test 6: Boundary SQLi Rejection in Multipart Form Data OK")
+
+    # Test Boundary Path Traversal in Uploaded Filename
+    traversal_form_res = client.post(
+        "/api/v1/try-on/jobs",
+        data={"category": "tops"},
+        files={
+            "person_image": ("../../secret_photo.jpg", p_data, "image/jpeg"),
+            "garment_image": ("garment.png", g_data, "image/png"),
+        }
+    )
+    assert traversal_form_res.status_code == 400
+    traversal_form_data = traversal_form_res.json()
+    assert traversal_form_data["detail"]["code"] == "INJECTION_ATTACK_DETECTED_PATH_TRAVERSAL"
+    print("[PASS] HTTP Test 7: Boundary Path Traversal Rejection in Filename OK")
+
+    print("\nALL AI-SERVICE TESTS (CORE + BOUNDARY SECURITY) PASSED SUCCESSFULLY! (100% OK)")
 
 if __name__ == "__main__":
     asyncio.run(run_tests())

@@ -2,6 +2,7 @@ from fastapi import APIRouter, UploadFile, File, Form, BackgroundTasks, HTTPExce
 from typing import Optional
 from ...services.job_queue import JobManager
 from ...core.config import settings
+from ...core.sanitizer import inspect_string
 
 def create_try_on_router(job_manager: JobManager) -> APIRouter:
     r = APIRouter(tags=["Virtual Try-On"])
@@ -14,6 +15,20 @@ def create_try_on_router(job_manager: JobManager) -> APIRouter:
         category: str = Form("tops", description="Garment category: tops, bottoms, dresses, outerwear"),
         model_name: Optional[str] = Form(None, description="Optional target model adapter name"),
     ):
+        # Validate form inputs against injections
+        for field_name, field_val in [("category", category), ("model_name", model_name), ("person_filename", person_image.filename), ("garment_filename", garment_image.filename)]:
+            if field_val:
+                threat = inspect_string(field_val, field_name)
+                if threat:
+                    raise HTTPException(
+                        status_code=400,
+                        detail={
+                            "error": "SecurityViolation",
+                            "code": f"INJECTION_ATTACK_DETECTED_{threat['threat_type']}",
+                            "message": f"Malicious {threat['threat_type']} payload blocked in form field '{field_name}'."
+                        }
+                    )
+
         try:
             person_bytes = await person_image.read()
             garment_bytes = await garment_image.read()
@@ -64,6 +79,19 @@ def create_try_on_router(job_manager: JobManager) -> APIRouter:
         garment_image: UploadFile = File(..., description="Garment product image"),
         category: Optional[str] = Form("tops", description="Garment category: tops, bottoms, dresses"),
     ):
+        for field_name, field_val in [("category", category), ("person_filename", person_image.filename), ("garment_filename", garment_image.filename)]:
+            if field_val:
+                threat = inspect_string(field_val, field_name)
+                if threat:
+                    raise HTTPException(
+                        status_code=400,
+                        detail={
+                            "error": "SecurityViolation",
+                            "code": f"INJECTION_ATTACK_DETECTED_{threat['threat_type']}",
+                            "message": f"Malicious {threat['threat_type']} payload blocked in form field '{field_name}'."
+                        }
+                    )
+
         person_bytes = await person_image.read()
         garment_bytes = await garment_image.read()
         

@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .core.config import settings
+from .core.sanitizer import InputSanitizerMiddleware
 from .adapters.registry import ModelRegistry
 from .services.job_queue import JobManager
 from .api.routes.health import create_health_router
@@ -17,6 +18,8 @@ def create_app() -> FastAPI:
         description=settings.description,
         version=settings.version,
     )
+
+    app.add_middleware(InputSanitizerMiddleware)
 
     app.add_middleware(
         CORSMiddleware,
