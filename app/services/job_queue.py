@@ -121,18 +121,29 @@ class JobManager:
             job.updated_at = time.time()
             
             loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(
-                None,
-                adapter.infer,
-                person_img,
-                garment_img,
-                job.category,
-                job.job_id,
-                self.output_dir
-            )
+            try:
+                result = await asyncio.wait_for(
+                    loop.run_in_executor(
+                        None,
+                        adapter.infer,
+                        person_img,
+                        garment_img,
+                        job.category,
+                        job.job_id,
+                        self.output_dir
+                    ),
+                    timeout=30.0  # Explicit 30s timeout to prevent thread starvation
+                )
+            except asyncio.TimeoutError:
+                job.status = "failed"
+                job.error_message = "Inference execution timed out after 30s to prevent worker starvation."
+                job.updated_at = time.time()
+                self.total_failed += 1
+                return
 
             if job.status == "cancelled":
                 return
+
 
             job.status = "completed"
             job.progress = 100

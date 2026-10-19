@@ -5,7 +5,9 @@ import asyncio
 import io
 import os
 import sys
+import time
 from PIL import Image, ImageDraw
+
 
 # Add parent directory to sys.path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -215,8 +217,55 @@ async def run_tests():
     assert not_found_data["code"] == "ROUTE_NOT_FOUND"
     print("[PASS] HTTP Test 12: Structured 404 Not Found Routing OK")
 
-    print("\nALL AI-SERVICE TESTS (CORE + BOUNDARY SECURITY + CORS + RATE LIMITING + RESILIENCE) PASSED SUCCESSFULLY! (100% OK)")
+    # HTTP Test 13: Idempotent Try-On Job Submission
+    ai_idemp_key = f"ai_idemp_{int(time.time()*1000)}"
+    idemp_post1 = client.post(
+        "/api/v1/try-on/jobs",
+        data={"category": "tops"},
+        files={
+            "person_image": ("person.jpg", p_bytes, "image/jpeg"),
+            "garment_image": ("garment.png", g_bytes, "image/png"),
+        },
+        headers={"idempotency-key": ai_idemp_key}
+    )
+    assert idemp_post1.status_code == 200, f"Expected 200, got {idemp_post1.status_code}"
+    job_data_1 = idemp_post1.json()
+    assert "job_id" in job_data_1
+
+    # Retry duplicate request with identical idempotency key
+    idemp_post2 = client.post(
+        "/api/v1/try-on/jobs",
+        data={"category": "tops"},
+        files={
+            "person_image": ("person.jpg", p_bytes, "image/jpeg"),
+            "garment_image": ("garment.png", g_bytes, "image/png"),
+        },
+        headers={"idempotency-key": ai_idemp_key}
+    )
+    assert idemp_post2.status_code == 200
+    assert idemp_post2.headers.get("idempotency-replay") == "true"
+    job_data_2 = idemp_post2.json()
+    assert job_data_2["job_id"] == job_data_1["job_id"], "Must return identical job ID on replay"
+    print("[PASS] HTTP Test 13: Idempotent Try-On Job Submission & Replay OK")
+
+    # HTTP Test 14: Idempotency Payload Mismatch Rejection (HTTP 422)
+    idemp_mismatch = client.post(
+        "/api/v1/try-on/jobs",
+        data={"category": "dresses"}, # Changed category!
+        files={
+            "person_image": ("person.jpg", p_bytes, "image/jpeg"),
+            "garment_image": ("garment.png", g_bytes, "image/png"),
+        },
+        headers={"idempotency-key": ai_idemp_key}
+    )
+    assert idemp_mismatch.status_code == 422, f"Expected 422, got {idemp_mismatch.status_code}"
+    mismatch_data = idemp_mismatch.json()
+    assert mismatch_data["detail"]["code"] == "IDEMPOTENCY_PAYLOAD_MISMATCH"
+    print("[PASS] HTTP Test 14: Idempotency Payload Mismatch Rejection (HTTP 422) OK")
+
+    print("\nALL AI-SERVICE TESTS (CORE + BOUNDARY SECURITY + CORS + RATE LIMITING + RESILIENCE + IDEMPOTENCY) PASSED SUCCESSFULLY! (100% OK)")
 
 if __name__ == "__main__":
     asyncio.run(run_tests())
+
 

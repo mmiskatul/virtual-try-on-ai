@@ -1,14 +1,17 @@
-from fastapi import APIRouter, UploadFile, File, Form, BackgroundTasks, HTTPException
+from fastapi import APIRouter, UploadFile, File, Form, BackgroundTasks, HTTPException, Request, Response
 from typing import Optional
 from ...services.job_queue import JobManager
 from ...core.config import settings
 from ...core.sanitizer import inspect_string
+from ...core.idempotency import idempotency_manager
 
 def create_try_on_router(job_manager: JobManager) -> APIRouter:
     r = APIRouter(tags=["Virtual Try-On"])
 
     @r.post("/api/v1/try-on/jobs")
     async def create_try_on_job(
+        request: Request,
+        response: Response,
         background_tasks: BackgroundTasks,
         person_image: UploadFile = File(..., description="User full or upper body photograph"),
         garment_image: UploadFile = File(..., description="Garment product apparel photograph"),
@@ -40,6 +43,30 @@ def create_try_on_router(job_manager: JobManager) -> APIRouter:
         if len(garment_bytes) > settings.max_upload_size_bytes:
             raise HTTPException(status_code=400, detail="Garment image exceeds 10MB limit.")
 
+        # Idempotency verification
+        idempotency_key = request.headers.get("idempotency-key") or request.headers.get("x-idempotency-key")
+        req_hash = None
+        if idempotency_key:
+            req_hash = idempotency_manager.compute_hash(
+                category.encode("utf-8"),
+                (model_name or "").encode("utf-8"),
+                person_bytes,
+                garment_bytes
+            )
+            existing = idempotency_manager.get_record(idempotency_key)
+            if existing:
+                if existing.request_hash != req_hash:
+                    raise HTTPException(
+                        status_code=422,
+                        detail={
+                            "error": "UnprocessableEntity",
+                            "code": "IDEMPOTENCY_PAYLOAD_MISMATCH",
+                            "message": "Idempotency key was previously used with a different request payload."
+                        }
+                    )
+                response.headers["idempotency-replay"] = "true"
+                return existing.response_payload
+
         job = job_manager.create_job(
             category=category.lower(),
             person_bytes=person_bytes,
@@ -50,7 +77,7 @@ def create_try_on_router(job_manager: JobManager) -> APIRouter:
 
         background_tasks.add_task(job_manager.execute_job, job.job_id, model_name)
 
-        return {
+        result_payload = {
             "job_id": job.job_id,
             "status": job.status,
             "category": job.category,
@@ -58,6 +85,12 @@ def create_try_on_router(job_manager: JobManager) -> APIRouter:
             "created_at": job.created_at,
             "poll_url": f"/api/v1/try-on/jobs/{job.job_id}",
         }
+
+        if idempotency_key and req_hash:
+            idempotency_manager.store_record(idempotency_key, req_hash, result_payload, 200)
+
+        return result_payload
+
 
     @r.get("/api/v1/try-on/jobs/{job_id}")
     async def get_try_on_job(job_id: str):
