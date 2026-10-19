@@ -49,5 +49,10 @@ class Settings(BaseModel):
     cloudinary_api_secret: Optional[str] = os.getenv("CLOUDINARY_API_SECRET")
     cloudinary_folder: str = os.getenv("CLOUDINARY_FOLDER", "virtual-try-on/results")
 
+    # External AI Virtual Try-On API (Cloud Provider: Fashn.ai, Replicate, Kling, Segmind, or custom)
+    vton_api_key: Optional[str] = os.getenv("VTON_API_KEY") or os.getenv("FASHN_API_KEY") or os.getenv("REPLICATE_API_TOKEN") or os.getenv("KLING_API_KEY")
+    vton_api_url: Optional[str] = os.getenv("VTON_API_URL")
+    vton_provider: str = os.getenv("VTON_PROVIDER", "auto")
+
 settings = Settings()
 os.makedirs(settings.output_dir, exist_ok=True)
