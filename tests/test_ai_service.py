@@ -77,7 +77,7 @@ async def run_tests():
 
     print("\n[TEST] Initializing FastAPI TestClient for Boundary Security Tests...")
     fastapi_app = create_app()
-    client = TestClient(fastapi_app)
+    client = TestClient(fastapi_app, raise_server_exceptions=False)
 
     # Test HTTP Health Check
     health_res = client.get("/health")
@@ -196,7 +196,27 @@ async def run_tests():
     assert hit_429, "Rate limit burst must return HTTP 429"
     print("[PASS] HTTP Test 10: Rate Limiting Headers & DDoS Protection (HTTP 429) Enforced OK")
 
-    print("\nALL AI-SERVICE TESTS (CORE + BOUNDARY SECURITY + CORS + RATE LIMITING) PASSED SUCCESSFULLY! (100% OK)")
+    # HTTP Test 11: Graceful Exception Handling & Zero Secret/Traceback Leakage
+    crash_res = client.get("/test/crash")
+    assert crash_res.status_code == 500, f"Expected 500, got {crash_res.status_code}"
+    crash_data = crash_res.json()
+    assert crash_data["error"] == "InternalServerError"
+    assert crash_data["code"] == "INTERNAL_SERVER_ERROR"
+    assert "errorId" in crash_data, "Expected errorId in response"
+    assert "aiGpuSecretToken9911" not in crash_res.text, "Secret key must NEVER leak to client"
+    assert "Traceback" not in crash_res.text, "Traceback must NEVER leak to client"
+    print("[PASS] HTTP Test 11: Graceful Exception Handling (Zero Secret/Traceback Leakage) OK")
+
+    # HTTP Test 12: Structured 404 Not Found Routing
+    not_found_res = client.get("/api/v1/invalid-route-path-xyz")
+    assert not_found_res.status_code == 404, f"Expected 404, got {not_found_res.status_code}"
+    not_found_data = not_found_res.json()
+    assert not_found_data["error"] == "NotFoundError"
+    assert not_found_data["code"] == "ROUTE_NOT_FOUND"
+    print("[PASS] HTTP Test 12: Structured 404 Not Found Routing OK")
+
+    print("\nALL AI-SERVICE TESTS (CORE + BOUNDARY SECURITY + CORS + RATE LIMITING + RESILIENCE) PASSED SUCCESSFULLY! (100% OK)")
 
 if __name__ == "__main__":
     asyncio.run(run_tests())
+

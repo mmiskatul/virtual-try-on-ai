@@ -7,6 +7,7 @@ from .core.config import settings
 from .core.sanitizer import InputSanitizerMiddleware
 from .core.rate_limiter import RateLimiterMiddleware
 from .core.cors_config import CORS_ORIGIN_REGEX, ALLOWED_METHODS, ALLOWED_HEADERS, EXPOSED_HEADERS
+from .core.error_handler import setup_exception_handlers
 from .adapters.registry import ModelRegistry
 from .services.job_queue import JobManager
 from .api.routes.health import create_health_router
@@ -20,6 +21,9 @@ def create_app() -> FastAPI:
         description=settings.description,
         version=settings.version,
     )
+
+    # Centralized graceful error handling & 404 routing
+    setup_exception_handlers(app)
 
     # 1. Application-level Sliding-Window Rate Limiting Middleware
     app.add_middleware(RateLimiterMiddleware)
@@ -53,4 +57,10 @@ def create_app() -> FastAPI:
     app.include_router(create_try_on_router(job_manager))
     app.include_router(create_metrics_router(job_manager))
 
+    if settings.env in ("test", "development"):
+        @app.get("/test/crash")
+        async def test_crash():
+            raise RuntimeError("Secret AI GPU cluster key in stack trace: aiGpuSecretToken9911")
+
     return app
+
