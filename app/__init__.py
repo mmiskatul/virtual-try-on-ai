@@ -8,6 +8,7 @@ from .core.sanitizer import InputSanitizerMiddleware
 from .core.rate_limiter import RateLimiterMiddleware
 from .core.cors_config import CORS_ORIGIN_REGEX, ALLOWED_METHODS, ALLOWED_HEADERS, EXPOSED_HEADERS
 from .core.error_handler import setup_exception_handlers
+from .core.observability import ObservabilityMiddleware, create_observability_router
 from .adapters.registry import ModelRegistry
 from .services.job_queue import JobManager
 from .api.routes.health import create_health_router
@@ -42,6 +43,9 @@ def create_app() -> FastAPI:
         max_age=86400,
     )
 
+    # 4. Enterprise Observability Middleware (Request Correlation, Tracing, Metrics, JSON Logging)
+    app.add_middleware(ObservabilityMiddleware)
+
     # Core singletons
     registry = ModelRegistry()
     job_manager = JobManager(registry=registry, output_dir=settings.output_dir)
@@ -52,6 +56,7 @@ def create_app() -> FastAPI:
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
     # Wire modular routers
+    app.include_router(create_observability_router(registry=registry, job_manager=job_manager, output_dir=settings.output_dir))
     app.include_router(create_health_router(registry))
     app.include_router(create_models_router(registry))
     app.include_router(create_try_on_router(job_manager))

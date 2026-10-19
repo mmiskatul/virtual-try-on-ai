@@ -263,7 +263,74 @@ async def run_tests():
     assert mismatch_data["detail"]["code"] == "IDEMPOTENCY_PAYLOAD_MISMATCH"
     print("[PASS] HTTP Test 14: Idempotency Payload Mismatch Rejection (HTTP 422) OK")
 
-    print("\nALL AI-SERVICE TESTS (CORE + BOUNDARY SECURITY + CORS + RATE LIMITING + RESILIENCE + IDEMPOTENCY) PASSED SUCCESSFULLY! (100% OK)")
+    # HTTP Test 15: Infrastructure Liveness Probe (/live)
+    live_res = client.get("/live")
+    assert live_res.status_code == 200, f"Expected 200, got {live_res.status_code}"
+    live_data = live_res.json()
+    assert live_data["status"] == "alive"
+    assert live_data["service"] == "ai-service"
+    print("[PASS] HTTP Test 15: Infrastructure Liveness Probe (/live) OK")
+
+    # HTTP Test 16: Deep Readiness Probe (/ready)
+    ready_res = client.get("/ready")
+    assert ready_res.status_code == 200, f"Expected 200, got {ready_res.status_code}"
+    ready_data = ready_res.json()
+    assert ready_data["status"] == "ready"
+    assert ready_data["checks"]["memory"] == "ok"
+    assert ready_data["checks"]["models"] == "ok"
+    assert ready_data["checks"]["storage"] == "ok"
+    assert ready_data["details"]["available_models"] >= 1
+    print("[PASS] HTTP Test 16: Deep Readiness Probe (/ready) OK")
+
+    # HTTP Test 17: Prometheus Standard Metrics Exposition (/metrics)
+    metrics_res = client.get("/metrics")
+    assert metrics_res.status_code == 200, f"Expected 200, got {metrics_res.status_code}"
+    assert "text/plain" in metrics_res.headers.get("content-type", "")
+    metrics_text = metrics_res.text
+    assert "# HELP ai_service_uptime_seconds" in metrics_text
+    assert "# HELP ai_service_process_memory_bytes" in metrics_text
+    assert "ai_service_http_requests_total" in metrics_text
+    assert "ai_service_tryon_jobs_total" in metrics_text
+    print("[PASS] HTTP Test 17: Prometheus Standard Metrics Exposition (/metrics) OK")
+
+    # HTTP Test 18: JSON Metrics Summary Endpoint (/metrics/json)
+    json_metrics_res = client.get("/metrics/json")
+    assert json_metrics_res.status_code == 200
+    json_metrics = json_metrics_res.json()
+    assert json_metrics["service"] == "ai-service"
+    assert "memory" in json_metrics
+    assert "latencies_ms" in json_metrics
+    assert "tryon_engine" in json_metrics
+    print("[PASS] HTTP Test 18: JSON Metrics Summary Endpoint (/metrics/json) OK")
+
+    # HTTP Test 19: Request Correlation ID & OpenTelemetry Tracing Headers
+    custom_trace_id = "req-ai-custom-trace-777"
+    traced_res = client.get("/live", headers={"x-request-id": custom_trace_id})
+    assert traced_res.status_code == 200
+    assert traced_res.headers.get("x-request-id") == custom_trace_id
+    assert "traceparent" in traced_res.headers, "Must attach W3C traceparent header"
+    print("[PASS] HTTP Test 19: Request Correlation ID & OpenTelemetry Tracing OK")
+
+    # HTTP Test 20: Sensitive Data Redaction in Structured Logging
+    from app.core.observability import redact_sensitive_data
+    dirty_event = {
+        "userId": "user_123",
+        "password": "GpuSuperSecretPassword99!",
+        "token": "bearer.token.ai.cluster",
+        "nested": {
+            "apiKey": "sk_live_ai_engine_secret",
+            "model": "VITON-HD"
+        }
+    }
+    scrubbed = redact_sensitive_data(dirty_event)
+    assert scrubbed["userId"] == "user_123"
+    assert scrubbed["password"] == "[REDACTED]"
+    assert scrubbed["token"] == "[REDACTED]"
+    assert scrubbed["nested"]["apiKey"] == "[REDACTED]"
+    assert scrubbed["nested"]["model"] == "VITON-HD"
+    print("[PASS] HTTP Test 20: Structured Log Sensitive Data Redaction Verified OK")
+
+    print("\nALL AI-SERVICE TESTS (CORE + BOUNDARY SECURITY + CORS + RATE LIMITING + RESILIENCE + IDEMPOTENCY + OBSERVABILITY) PASSED SUCCESSFULLY! (100% OK)")
 
 if __name__ == "__main__":
     asyncio.run(run_tests())
