@@ -330,7 +330,16 @@ async def run_tests():
     assert scrubbed["nested"]["model"] == "VITON-HD"
     print("[PASS] HTTP Test 20: Structured Log Sensitive Data Redaction Verified OK")
 
-    print("\nALL AI-SERVICE TESTS (CORE + BOUNDARY SECURITY + CORS + RATE LIMITING + RESILIENCE + IDEMPOTENCY + OBSERVABILITY) PASSED SUCCESSFULLY! (100% OK)")
+    # HTTP Test 21: Cloudinary Storage Readiness & Storage Status Endpoint
+    storage_res = client.get("/api/v1/storage/status")
+    assert storage_res.status_code == 200
+    storage_data = storage_res.json()
+    assert "provider" in storage_data
+    assert "cloudinary_configured" in storage_data
+    assert storage_data["status"] == "ready"
+    print("[PASS] HTTP Test 21: Cloudinary Storage Adapter & Status Verification OK")
+
+    print("\nALL AI-SERVICE TESTS (CORE + BOUNDARY SECURITY + CORS + RATE LIMITING + RESILIENCE + IDEMPOTENCY + OBSERVABILITY + CLOUDINARY) PASSED SUCCESSFULLY! (100% OK)")
 
 if __name__ == "__main__":
     asyncio.run(run_tests())

@@ -1,4 +1,5 @@
 import os
+from typing import Optional
 from pydantic import BaseModel
 
 # Automatically load .env if present
@@ -40,6 +41,13 @@ class Settings(BaseModel):
     base_dir: str = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     output_dir: str = os.path.join(base_dir, "static", "results")
     max_upload_size_bytes: int = int(os.getenv("MAX_UPLOAD_SIZE_MB", "10")) * 1024 * 1024
+
+    # Cloudinary Image Storage
+    cloudinary_url: Optional[str] = os.getenv("CLOUDINARY_URL")
+    cloudinary_cloud_name: Optional[str] = os.getenv("CLOUDINARY_CLOUD_NAME")
+    cloudinary_api_key: Optional[str] = os.getenv("CLOUDINARY_API_KEY")
+    cloudinary_api_secret: Optional[str] = os.getenv("CLOUDINARY_API_SECRET")
+    cloudinary_folder: str = os.getenv("CLOUDINARY_FOLDER", "virtual-try-on/results")
 
 settings = Settings()
 os.makedirs(settings.output_dir, exist_ok=True)

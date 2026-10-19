@@ -4,6 +4,7 @@ import numpy as np
 from typing import Dict, Any, Optional
 from PIL import Image, ImageFilter, ImageOps, ImageEnhance
 from .base import BaseTryOnAdapter, TryOnResult
+from ..services.cloudinary_storage import cloudinary_service
 
 class ProductionVitonHDAdapter(BaseTryOnAdapter):
     """
@@ -100,14 +101,29 @@ class ProductionVitonHDAdapter(BaseTryOnAdapter):
         filename = f"tryon_{job_id}.jpg"
         filepath = os.path.join(output_dir, filename)
         final_img.save(filepath, "JPEG", quality=92)
-        
+
+        # Upload to Cloudinary if configured in .env; fallback gracefully to local static path
+        output_url = f"/static/results/{filename}"
+        storage_provider = "local"
+        try:
+            cloudinary_url = cloudinary_service.upload_image(
+                filepath,
+                public_id=f"tryon_{job_id}",
+                tags=["virtual-try-on", category, job_id]
+            )
+            if cloudinary_url:
+                output_url = cloudinary_url
+                storage_provider = "cloudinary"
+        except Exception:
+            pass
+
         latency_ms = (time.time() - start_time) * 1000
-        
+
         return TryOnResult(
             job_id=job_id,
             status="completed",
             output_image_path=filepath,
-            output_url=f"/static/results/{filename}",
+            output_url=output_url,
             latency_ms=latency_ms,
             model_name=self.name,
             model_version=self.version,
@@ -117,6 +133,7 @@ class ProductionVitonHDAdapter(BaseTryOnAdapter):
                 "device": "CPU-Optimized-Engine",
                 "confidence_score": 0.984,
                 "garment_category": category,
+                "storage": storage_provider,
             }
         )
 

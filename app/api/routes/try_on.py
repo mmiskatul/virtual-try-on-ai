@@ -1,6 +1,8 @@
-from fastapi import APIRouter, UploadFile, File, Form, BackgroundTasks, HTTPException, Request, Response
+import os
 from typing import Optional
+from fastapi import APIRouter, UploadFile, File, Form, BackgroundTasks, HTTPException, Request, Response
 from ...services.job_queue import JobManager
+from ...services.cloudinary_storage import cloudinary_service
 from ...core.config import settings
 from ...core.sanitizer import inspect_string
 from ...core.idempotency import idempotency_manager
@@ -139,5 +141,48 @@ def create_try_on_router(job_manager: JobManager) -> APIRouter:
         await job_manager.execute_job(job.job_id)
         updated = job_manager.get_job(job.job_id)
         return updated.to_dict() if updated else {}
+
+    @r.get("/api/v1/storage/status")
+    async def get_storage_status():
+        is_cloud = cloudinary_service.is_configured()
+        return {
+            "provider": "cloudinary" if is_cloud else "local_disk",
+            "cloudinary_configured": is_cloud,
+            "cloud_name": settings.cloudinary_cloud_name if is_cloud else None,
+            "folder": settings.cloudinary_folder,
+            "status": "ready"
+        }
+
+    @r.post("/api/v1/storage/upload")
+    async def upload_image_direct(
+        file: UploadFile = File(..., description="Image file to store on Cloudinary"),
+        folder: Optional[str] = Form(None)
+    ):
+        file_bytes = await file.read()
+        if len(file_bytes) > settings.max_upload_size_bytes:
+            raise HTTPException(status_code=400, detail="Image exceeds max allowed upload size.")
+
+        cloudinary_url = cloudinary_service.upload_image(file_bytes, folder=folder)
+        if cloudinary_url:
+            return {
+                "success": True,
+                "provider": "cloudinary",
+                "url": cloudinary_url,
+                "filename": file.filename
+            }
+
+        import uuid
+        local_filename = f"upload_{uuid.uuid4().hex[:10]}_{file.filename or 'image.jpg'}"
+        local_path = os.path.join(settings.output_dir, local_filename)
+        with open(local_path, "wb") as f:
+            f.write(file_bytes)
+
+        return {
+            "success": True,
+            "provider": "local_disk",
+            "url": f"/static/results/{local_filename}",
+            "filename": file.filename,
+            "note": "Cloudinary not configured in .env; saved to local static storage."
+        }
 
     return r
