@@ -8,7 +8,6 @@ from typing import Dict, Any, Optional
 from PIL import Image
 from .base import BaseTryOnAdapter, TryOnResult
 from ..core.config import settings
-from ..services.cloudinary_storage import cloudinary_service
 
 class ExternalVtonApiAdapter(BaseTryOnAdapter):
     """

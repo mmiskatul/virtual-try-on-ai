@@ -16,6 +16,7 @@ class TryOnJob:
         garment_bytes: bytes,
         person_filename: str = "person.jpg",
         garment_filename: str = "garment.jpg",
+        prompt: Optional[str] = None,
     ):
         self.job_id = job_id
         self.category = category
@@ -23,6 +24,7 @@ class TryOnJob:
         self.garment_bytes = garment_bytes
         self.person_filename = person_filename
         self.garment_filename = garment_filename
+        self.prompt = prompt
         self.status = "queued" # queued, validating, processing, completed, failed, cancelled
         self.created_at = time.time()
         self.updated_at = time.time()
@@ -31,14 +33,20 @@ class TryOnJob:
         self.error_message: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
+        output_url = self.result.output_url if self.result else None
         return {
             "job_id": self.job_id,
+            "jobId": self.job_id,
             "status": self.status,
             "progress": self.progress,
             "category": self.category,
+            "prompt": self.prompt,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "result": self.result.to_dict() if self.result else None,
+            "resultUrl": output_url,
+            "output_url": output_url,
+            "output_image_url": output_url,
             "error_message": self.error_message,
         }
 
@@ -58,6 +66,7 @@ class JobManager:
         garment_bytes: bytes,
         person_filename: str = "person.jpg",
         garment_filename: str = "garment.jpg",
+        prompt: Optional[str] = None,
     ) -> TryOnJob:
         job_id = f"job_{uuid.uuid4().hex[:12]}"
         job = TryOnJob(
@@ -67,6 +76,7 @@ class JobManager:
             garment_bytes=garment_bytes,
             person_filename=person_filename,
             garment_filename=garment_filename,
+            prompt=prompt,
         )
         self.jobs[job_id] = job
         return job
@@ -122,28 +132,41 @@ class JobManager:
             
             loop = asyncio.get_event_loop()
             try:
-                result = await asyncio.wait_for(
-                    loop.run_in_executor(
-                        None,
-                        adapter.infer,
-                        person_img,
-                        garment_img,
-                        job.category,
-                        job.job_id,
-                        self.output_dir
-                    ),
-                    timeout=30.0  # Explicit 30s timeout to prevent thread starvation
-                )
+                # Use native async inference if supported (e.g. FalFluxVtoAdapter)
+                if hasattr(adapter, "infer_async") and asyncio.iscoroutinefunction(adapter.infer_async):
+                    result = await asyncio.wait_for(
+                        adapter.infer_async(
+                            person_img,
+                            garment_img,
+                            job.category,
+                            job.job_id,
+                            self.output_dir,
+                            prompt=job.prompt
+                        ),
+                        timeout=90.0
+                    )
+                else:
+                    result = await asyncio.wait_for(
+                        loop.run_in_executor(
+                            None,
+                            adapter.infer,
+                            person_img,
+                            garment_img,
+                            job.category,
+                            job.job_id,
+                            self.output_dir
+                        ),
+                        timeout=90.0
+                    )
             except asyncio.TimeoutError:
                 job.status = "failed"
-                job.error_message = "Inference execution timed out after 30s to prevent worker starvation."
+                job.error_message = "Inference execution timed out after 90s to prevent worker starvation."
                 job.updated_at = time.time()
                 self.total_failed += 1
                 return
 
             if job.status == "cancelled":
                 return
-
 
             job.status = "completed"
             job.progress = 100

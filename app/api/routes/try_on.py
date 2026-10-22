@@ -2,7 +2,7 @@ import os
 from typing import Optional
 from fastapi import APIRouter, UploadFile, File, Form, BackgroundTasks, HTTPException, Request, Response
 from ...services.job_queue import JobManager
-from ...services.cloudinary_storage import cloudinary_service
+from ...services.image_loader import resolve_image_payload
 from ...core.config import settings
 from ...core.sanitizer import inspect_string
 from ...core.idempotency import idempotency_manager
@@ -11,18 +11,59 @@ def create_try_on_router(job_manager: JobManager) -> APIRouter:
     r = APIRouter(tags=["Virtual Try-On"])
 
     @r.post("/api/v1/try-on/jobs")
+    @r.post("/api/v1/tryon/jobs")
     async def create_try_on_job(
         request: Request,
         response: Response,
         background_tasks: BackgroundTasks,
-        person_image: UploadFile = File(..., description="User full or upper body photograph"),
-        garment_image: UploadFile = File(..., description="Garment product apparel photograph"),
-        category: str = Form("tops", description="Garment category: tops, bottoms, dresses, outerwear"),
+        person_image: Optional[UploadFile] = File(None, description="User full or upper body photograph"),
+        garment_image: Optional[UploadFile] = File(None, description="Garment product apparel photograph"),
+        category: Optional[str] = Form(None, description="Garment category: tops, bottoms, dresses, outerwear"),
         model_name: Optional[str] = Form(None, description="Optional target model adapter name"),
+        prompt: Optional[str] = Form(None, description="Optional styling prompt for AI try-on"),
     ):
-        # Validate form inputs against injections
-        for field_name, field_val in [("category", category), ("model_name", model_name), ("person_filename", person_image.filename), ("garment_filename", garment_image.filename)]:
-            if field_val:
+        content_type = request.headers.get("content-type", "").lower()
+        person_input = person_image
+        garment_input = garment_image
+        cat_str = category or "tops"
+        target_model = model_name
+        prompt_str = prompt
+
+        # Parse JSON payload if sent as application/json
+        if "application/json" in content_type:
+            try:
+                body = await request.json()
+            except Exception:
+                raise HTTPException(status_code=400, detail="Invalid JSON body payload.")
+
+            if isinstance(body, dict):
+                person_input = (
+                    body.get("personImage")
+                    or body.get("person_image")
+                    or body.get("userImageUrl")
+                    or body.get("user_image_url")
+                    or body.get("person")
+                )
+                garment_input = (
+                    body.get("garmentImage")
+                    or body.get("garment_image")
+                    or body.get("garmentImageUrl")
+                    or body.get("garment_image_url")
+                    or body.get("garment")
+                )
+                cat_str = body.get("category") or body.get("clothType") or cat_str
+                target_model = body.get("model_name") or body.get("modelName") or target_model
+                prompt_str = body.get("prompt") or body.get("instruction") or prompt_str
+
+        # Security inspection on text fields
+        for field_name, field_val in [
+            ("category", cat_str),
+            ("model_name", target_model),
+            ("prompt", prompt_str),
+            ("person_filename", getattr(person_image, "filename", None)),
+            ("garment_filename", getattr(garment_image, "filename", None)),
+        ]:
+            if field_val and isinstance(field_val, str):
                 threat = inspect_string(field_val, field_name)
                 if threat:
                     raise HTTPException(
@@ -30,15 +71,13 @@ def create_try_on_router(job_manager: JobManager) -> APIRouter:
                         detail={
                             "error": "SecurityViolation",
                             "code": f"INJECTION_ATTACK_DETECTED_{threat['threat_type']}",
-                            "message": f"Malicious {threat['threat_type']} payload blocked in form field '{field_name}'."
+                            "message": f"Malicious {threat['threat_type']} payload blocked in field '{field_name}'."
                         }
                     )
 
-        try:
-            person_bytes = await person_image.read()
-            garment_bytes = await garment_image.read()
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Failed to read image payloads: {str(e)}")
+        # Resolve image payloads (UploadFile, data URI, URL, or fallback)
+        person_bytes, p_name = await resolve_image_payload(person_input, fallback_type="person")
+        garment_bytes, g_name = await resolve_image_payload(garment_input, fallback_type="garment", category=cat_str)
 
         if len(person_bytes) > settings.max_upload_size_bytes:
             raise HTTPException(status_code=400, detail="Person image exceeds 10MB limit.")
@@ -50,8 +89,8 @@ def create_try_on_router(job_manager: JobManager) -> APIRouter:
         req_hash = None
         if idempotency_key:
             req_hash = idempotency_manager.compute_hash(
-                category.encode("utf-8"),
-                (model_name or "").encode("utf-8"),
+                cat_str.encode("utf-8"),
+                (target_model or "").encode("utf-8"),
                 person_bytes,
                 garment_bytes
             )
@@ -70,17 +109,19 @@ def create_try_on_router(job_manager: JobManager) -> APIRouter:
                 return existing.response_payload
 
         job = job_manager.create_job(
-            category=category.lower(),
+            category=cat_str.lower(),
             person_bytes=person_bytes,
             garment_bytes=garment_bytes,
-            person_filename=person_image.filename or "person.jpg",
-            garment_filename=garment_image.filename or "garment.jpg",
+            person_filename=p_name or "person.jpg",
+            garment_filename=g_name or "garment.jpg",
+            prompt=prompt_str,
         )
 
-        background_tasks.add_task(job_manager.execute_job, job.job_id, model_name)
+        background_tasks.add_task(job_manager.execute_job, job.job_id, target_model)
 
         result_payload = {
             "job_id": job.job_id,
+            "jobId": job.job_id,
             "status": job.status,
             "category": job.category,
             "message": "Virtual try-on job submitted successfully",
@@ -95,6 +136,7 @@ def create_try_on_router(job_manager: JobManager) -> APIRouter:
 
 
     @r.get("/api/v1/try-on/jobs/{job_id}")
+    @r.get("/api/v1/tryon/jobs/{job_id}")
     async def get_try_on_job(job_id: str):
         job = job_manager.get_job(job_id)
         if not job:
@@ -102,6 +144,7 @@ def create_try_on_router(job_manager: JobManager) -> APIRouter:
         return job.to_dict()
 
     @r.post("/api/v1/try-on/jobs/{job_id}/cancel")
+    @r.post("/api/v1/tryon/jobs/{job_id}/cancel")
     async def cancel_try_on_job(job_id: str):
         cancelled = job_manager.cancel_job(job_id)
         if not cancelled:
@@ -109,67 +152,80 @@ def create_try_on_router(job_manager: JobManager) -> APIRouter:
         return {"status": "cancelled", "job_id": job_id}
 
     @r.post("/api/v1/try-on")
+    @r.post("/api/v1/tryon")
     async def process_try_on_sync(
-        person_image: UploadFile = File(..., description="User person photo"),
-        garment_image: UploadFile = File(..., description="Garment product image"),
+        request: Request,
+        person_image: Optional[UploadFile] = File(None, description="User person photo"),
+        garment_image: Optional[UploadFile] = File(None, description="Garment product image"),
         category: Optional[str] = Form("tops", description="Garment category: tops, bottoms, dresses"),
+        model_name: Optional[str] = Form(None, description="Optional target model adapter name"),
+        prompt: Optional[str] = Form(None, description="Optional styling prompt"),
     ):
-        for field_name, field_val in [("category", category), ("person_filename", person_image.filename), ("garment_filename", garment_image.filename)]:
-            if field_val:
-                threat = inspect_string(field_val, field_name)
-                if threat:
-                    raise HTTPException(
-                        status_code=400,
-                        detail={
-                            "error": "SecurityViolation",
-                            "code": f"INJECTION_ATTACK_DETECTED_{threat['threat_type']}",
-                            "message": f"Malicious {threat['threat_type']} payload blocked in form field '{field_name}'."
-                        }
-                    )
+        content_type = request.headers.get("content-type", "").lower()
+        person_input = person_image
+        garment_input = garment_image
+        cat_str = category or "tops"
+        target_model = model_name
+        prompt_str = prompt
 
-        person_bytes = await person_image.read()
-        garment_bytes = await garment_image.read()
-        
+        if "application/json" in content_type:
+            try:
+                body = await request.json()
+            except Exception:
+                raise HTTPException(status_code=400, detail="Invalid JSON body payload.")
+            if isinstance(body, dict):
+                person_input = (
+                    body.get("personImage")
+                    or body.get("person_image")
+                    or body.get("userImageUrl")
+                    or body.get("user_image_url")
+                    or body.get("person")
+                )
+                garment_input = (
+                    body.get("garmentImage")
+                    or body.get("garment_image")
+                    or body.get("garmentImageUrl")
+                    or body.get("garment_image_url")
+                    or body.get("garment")
+                )
+                cat_str = body.get("category") or body.get("clothType") or cat_str
+                target_model = body.get("model_name") or body.get("modelName") or target_model
+                prompt_str = body.get("prompt") or body.get("instruction") or prompt_str
+
+        # Resolve image bytes
+        person_bytes, p_name = await resolve_image_payload(person_input, fallback_type="person")
+        garment_bytes, g_name = await resolve_image_payload(garment_input, fallback_type="garment", category=cat_str)
+
         job = job_manager.create_job(
-            category=category.lower() if category else "tops",
+            category=cat_str.lower(),
             person_bytes=person_bytes,
             garment_bytes=garment_bytes,
-            person_filename=person_image.filename or "person.jpg",
-            garment_filename=garment_image.filename or "garment.jpg",
+            person_filename=p_name or "person.jpg",
+            garment_filename=g_name or "garment.jpg",
+            prompt=prompt_str,
         )
         
-        await job_manager.execute_job(job.job_id)
+        await job_manager.execute_job(job.job_id, target_model)
         updated = job_manager.get_job(job.job_id)
         return updated.to_dict() if updated else {}
 
     @r.get("/api/v1/storage/status")
     async def get_storage_status():
-        is_cloud = cloudinary_service.is_configured()
         return {
-            "provider": "cloudinary" if is_cloud else "local_disk",
-            "cloudinary_configured": is_cloud,
-            "cloud_name": settings.cloudinary_cloud_name if is_cloud else None,
-            "folder": settings.cloudinary_folder,
-            "status": "ready"
+            "provider": "local_disk",
+            "storage_delegated_to_backend": True,
+            "status": "ready",
+            "note": "AI Service saves output locally or returns external generation URL. Cloudinary CDN persistence is managed centrally by Backend API."
         }
 
     @r.post("/api/v1/storage/upload")
     async def upload_image_direct(
-        file: UploadFile = File(..., description="Image file to store on Cloudinary"),
+        file: UploadFile = File(..., description="Image file to store locally in AI service"),
         folder: Optional[str] = Form(None)
     ):
         file_bytes = await file.read()
         if len(file_bytes) > settings.max_upload_size_bytes:
             raise HTTPException(status_code=400, detail="Image exceeds max allowed upload size.")
-
-        cloudinary_url = cloudinary_service.upload_image(file_bytes, folder=folder)
-        if cloudinary_url:
-            return {
-                "success": True,
-                "provider": "cloudinary",
-                "url": cloudinary_url,
-                "filename": file.filename
-            }
 
         import uuid
         local_filename = f"upload_{uuid.uuid4().hex[:10]}_{file.filename or 'image.jpg'}"
@@ -182,7 +238,7 @@ def create_try_on_router(job_manager: JobManager) -> APIRouter:
             "provider": "local_disk",
             "url": f"/static/results/{local_filename}",
             "filename": file.filename,
-            "note": "Cloudinary not configured in .env; saved to local static storage."
+            "note": "Stored in AI service local storage. Long-term CDN persistence managed by Backend Cloudinary adapter."
         }
 
     return r

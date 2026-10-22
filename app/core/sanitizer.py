@@ -27,6 +27,15 @@ NULL_BYTE_REGEX = re.compile(r"(\0|%00)")
 PATH_TRAVERSAL_REGEX = re.compile(r"(\.\.[/\\])")
 
 
+SAFE_IMAGE_DATA_PREFIXES = (
+    "data:image/jpeg;base64,",
+    "data:image/jpg;base64,",
+    "data:image/png;base64,",
+    "data:image/webp;base64,",
+    "data:image/gif;base64,",
+    "data:image/bmp;base64,",
+)
+
 def inspect_string(value: str, field_name: str = "") -> Optional[Dict[str, str]]:
     """
     Validate string input against SQLi, XSS, Path Traversal, and Null Byte exploits.
@@ -37,6 +46,13 @@ def inspect_string(value: str, field_name: str = "") -> Optional[Dict[str, str]]
 
     if NULL_BYTE_REGEX.search(value):
         return {"threat_type": "NULL_BYTE", "field": field_name}
+
+    # Safe image data URIs (e.g. base64 image uploads) are allowed through if free of script injection
+    val_lower = value.lower()
+    if val_lower.startswith(SAFE_IMAGE_DATA_PREFIXES):
+        if "<script" in val_lower or "javascript:" in val_lower:
+            return {"threat_type": "XSS", "field": field_name}
+        return None
 
     if PATH_TRAVERSAL_REGEX.search(value):
         return {"threat_type": "PATH_TRAVERSAL", "field": field_name}
@@ -53,10 +69,10 @@ def inspect_string(value: str, field_name: str = "") -> Optional[Dict[str, str]]
 def sanitize_html(str_val: str, field_name: str = "") -> str:
     """
     Cleans residual HTML markup, stripping angle brackets from general inputs.
-    Passwords, API keys, tokens, and hashes are preserved intact.
+    Passwords, API keys, tokens, hashes, image payloads, and URLs are preserved intact.
     """
     lower = field_name.lower()
-    if any(k in lower for k in ("key", "token", "secret", "password", "hash")):
+    if any(k in lower for k in ("key", "token", "secret", "password", "hash", "image", "photo", "url", "garment", "person")):
         return str_val
 
     # Strip HTML tags

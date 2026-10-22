@@ -23,6 +23,7 @@ class Settings(BaseModel):
     version: str = "1.0.0"
     host: str = os.getenv("HOST", "0.0.0.0")
     port: int = int(os.getenv("PORT", "8000"))
+    server_url: str = os.getenv("SERVER_URL", f"http://localhost:{os.getenv('PORT', '8000')}")
     env: str = os.getenv("ENV", "development")
     api_key: str = secrets_vault.get_secret(
         name="AI_SERVICE_API_KEY",
@@ -49,10 +50,19 @@ class Settings(BaseModel):
     cloudinary_api_secret: Optional[str] = os.getenv("CLOUDINARY_API_SECRET")
     cloudinary_folder: str = os.getenv("CLOUDINARY_FOLDER", "virtual-try-on/results")
 
-    # External AI Virtual Try-On API (Cloud Provider: Fashn.ai, Replicate, Kling, Segmind, or custom)
-    vton_api_key: Optional[str] = os.getenv("VTON_API_KEY") or os.getenv("FASHN_API_KEY") or os.getenv("REPLICATE_API_TOKEN") or os.getenv("KLING_API_KEY")
+    # External AI Virtual Try-On API (Cloud Provider: Fal.ai, Fashn.ai, Replicate, Kling, Segmind, or custom)
+    fal_key: Optional[str] = os.getenv("FAL_KEY") or os.getenv("FAL_API_KEY")
+    vton_api_key: Optional[str] = os.getenv("VTON_API_KEY") or os.getenv("FAL_KEY") or os.getenv("FASHN_API_KEY") or os.getenv("REPLICATE_API_TOKEN") or os.getenv("KLING_API_KEY")
     vton_api_url: Optional[str] = os.getenv("VTON_API_URL")
     vton_provider: str = os.getenv("VTON_PROVIDER", "auto")
 
+    # Google Gemini AI Multimodal Vision & Fashion Synthesis Orchestration
+    gemini_api_key: Optional[str] = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
+
 settings = Settings()
+if settings.fal_key:
+    os.environ["FAL_KEY"] = settings.fal_key
+if settings.gemini_api_key:
+    os.environ["GEMINI_API_KEY"] = settings.gemini_api_key
 os.makedirs(settings.output_dir, exist_ok=True)

@@ -6,6 +6,8 @@ import io
 import os
 import sys
 import time
+import base64
+import pytest
 from PIL import Image, ImageDraw
 
 
@@ -335,11 +337,43 @@ async def run_tests():
     assert storage_res.status_code == 200
     storage_data = storage_res.json()
     assert "provider" in storage_data
-    assert "cloudinary_configured" in storage_data
+    assert storage_data.get("storage_delegated_to_backend") is True
     assert storage_data["status"] == "ready"
     print("[PASS] HTTP Test 21: Cloudinary Storage Adapter & Status Verification OK")
 
+    # HTTP Test 22: JSON Payload Try-On Submission & Base64 Data URI Support
+    json_post = client.post(
+        "/api/v1/try-on/jobs",
+        json={
+            "personImage": "data:image/jpeg;base64," + base64.b64encode(p_bytes).decode("utf-8"),
+            "garmentImage": "data:image/png;base64," + base64.b64encode(g_bytes).decode("utf-8"),
+            "category": "tops"
+        }
+    )
+    assert json_post.status_code == 200, f"Expected 200 for JSON try-on, got {json_post.status_code}"
+    json_res_data = json_post.json()
+    assert "job_id" in json_res_data
+    assert json_res_data["status"] in ("queued", "processing", "completed")
+    print("[PASS] HTTP Test 22: JSON Payload Try-On Submission & Base64 Data URI Support OK")
+
+    # HTTP Test 23: Direct JSON Route Aliasing (/api/v1/tryon/jobs)
+    alias_post = client.post(
+        "/api/v1/tryon/jobs",
+        json={
+            "user_image_url": "data:image/jpeg;base64," + base64.b64encode(p_bytes).decode("utf-8"),
+            "garment_image_url": "data:image/png;base64," + base64.b64encode(g_bytes).decode("utf-8"),
+            "clothType": "tops"
+        }
+    )
+    assert alias_post.status_code == 200, f"Expected 200 for alias tryon jobs, got {alias_post.status_code}"
+    assert "job_id" in alias_post.json()
+    print("[PASS] HTTP Test 23: Direct JSON Route Aliasing (/api/v1/tryon/jobs) OK")
+
     print("\nALL AI-SERVICE TESTS (CORE + BOUNDARY SECURITY + CORS + RATE LIMITING + RESILIENCE + IDEMPOTENCY + OBSERVABILITY + CLOUDINARY) PASSED SUCCESSFULLY! (100% OK)")
+
+@pytest.mark.asyncio
+async def test_full_ai_service_suite():
+    await run_tests()
 
 if __name__ == "__main__":
     asyncio.run(run_tests())
