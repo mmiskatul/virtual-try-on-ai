@@ -58,7 +58,7 @@ class Settings(BaseModel):
 
     # Google Gemini AI Multimodal Vision & Fashion Synthesis Orchestration
     gemini_api_key: Optional[str] = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-    gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
+    gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
 
 settings = Settings()
 if settings.fal_key:

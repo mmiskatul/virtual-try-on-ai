@@ -6,10 +6,13 @@ or high-precision VITON-HD synthesis fallback.
 """
 
 import os
+import io
+import base64
 import time
 import asyncio
 import logging
 from typing import Dict, Any, Optional, List
+import httpx
 from PIL import Image
 
 try:
@@ -36,16 +39,23 @@ class GeminiVtonOrchestratorAdapter(BaseTryOnAdapter):
     """
 
     CANDIDATE_MODELS = [
-        "gemini-flash-latest",
-        "gemini-3.8-flash",
+        "gemini-3.6-flash",
         "gemini-3.5-flash",
-        "gemini-2.5-flash",
-        "gemini-1.5-flash",
+        "gemini-3.5-flash-lite",
+        "gemini-3.1-flash-lite",
     ]
+
+    IMAGE_MODELS = (
+        "gemini-3.1-flash-image",
+        "gemini-2.5-flash-image",
+        "gemini-3-pro-image",
+        "gemini-3.1-flash-lite-image",
+        "gemini-nano-banana-2.1",
+    )
 
     def __init__(self, api_key: Optional[str] = None, model_name: Optional[str] = None):
         self.api_key = api_key or settings.gemini_api_key
-        self.configured_model = model_name or settings.gemini_model or "gemini-flash-latest"
+        self.configured_model = model_name or settings.gemini_model or "gemini-3.6-flash"
         self._viton_fallback = ProductionVitonHDAdapter()
         self._fal_adapter = FalFluxVtoAdapter()
         if self.api_key and GENAI_AVAILABLE:
@@ -108,8 +118,12 @@ Extract the artistic style, lighting, and garment drape from the second image an
 Output ONLY the final image generation prompt. Do not include introductory text or markdown commentary.
 """.strip()
 
-        # Try configured model first, followed by candidate list
-        models_to_try = [self.configured_model] + [m for m in self.CANDIDATE_MODELS if m != self.configured_model]
+        # Try configured vision model first (skip image-only models during text prompt synthesis)
+        target_model = os.getenv("GEMINI_MODEL") or self.configured_model
+        is_image_only = any(tok in target_model.lower() for tok in ("image", "nano-banana"))
+        models_to_try = list(self.CANDIDATE_MODELS) if is_image_only else (
+            [target_model] + [m for m in self.CANDIDATE_MODELS if m != target_model]
+        )
 
         loop = asyncio.get_event_loop()
         for m_name in models_to_try:
@@ -129,6 +143,71 @@ Output ONLY the final image generation prompt. Do not include introductory text 
         # If all Gemini models fail or are rate-limited, return safe fallback prompt
         fallback_prompt = user_prompt or f"A natural front-facing studio shot. The {category} garment is worn naturally with realistic fabric drape."
         return fallback_prompt, "gemini_quota_fallback"
+
+    @staticmethod
+    def _pil_to_b64(img: Image.Image) -> str:
+        buf = io.BytesIO()
+        img.convert("RGB").save(buf, format="PNG")
+        return base64.b64encode(buf.getvalue()).decode("ascii")
+
+    async def _try_gemini_image_generation(
+        self,
+        model_id: str,
+        api_key: str,
+        person_img: Image.Image,
+        garment_img: Image.Image,
+        category: str,
+        prompt: str,
+        job_id: str,
+        output_dir: str,
+    ) -> Optional[TryOnResult]:
+        """Call native Gemini image-generation REST API when an image model (e.g. gemini-3.1-flash-image) is configured."""
+        t0 = time.time()
+        os.makedirs(output_dir, exist_ok=True)
+        out_path = os.path.join(output_dir, f"{job_id}.png")
+        instruction = (
+            f"Virtual try-on task: dress the person from the first image in the {category} garment from the second image. "
+            f"Preserve the person's face, body pose, skin tone, and background naturally. {prompt}"
+        ).strip()
+        payload = {
+            "contents": [{
+                "parts": [
+                    {"text": instruction},
+                    {"inlineData": {"mimeType": "image/png", "data": self._pil_to_b64(person_img)}},
+                    {"inlineData": {"mimeType": "image/png", "data": self._pil_to_b64(garment_img)}},
+                ]
+            }],
+            "generationConfig": {"responseModalities": ["IMAGE"]},
+        }
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_id}:generateContent"
+        async with httpx.AsyncClient(timeout=45.0) as client:
+            resp = await client.post(
+                url,
+                headers={"x-goog-api-key": api_key, "Content-Type": "application/json"},
+                json=payload,
+            )
+        if resp.status_code != 200:
+            raise RuntimeError(f"Gemini image API HTTP {resp.status_code}: {resp.text[:240]}")
+
+        data = resp.json()
+        parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+        for part in parts:
+            inline = part.get("inlineData") or {}
+            b64_data = inline.get("data")
+            if b64_data:
+                raw_bytes = base64.b64decode(b64_data)
+                with open(out_path, "wb") as fh:
+                    fh.write(raw_bytes)
+                return TryOnResult(
+                    job_id=job_id,
+                    status="COMPLETED",
+                    output_image_path=out_path,
+                    model_name=self.name,
+                    model_version=self.version,
+                    latency_ms=(time.time() - t0) * 1000,
+                    metrics={"gemini_image_model": model_id},
+                )
+        raise RuntimeError(f"Gemini image model '{model_id}' returned no image bytes.")
 
     async def infer_async(
         self,
@@ -152,8 +231,28 @@ Output ONLY the final image generation prompt. Do not include introductory text 
         execution_engine = "viton_hd_composite"
         result: Optional[TryOnResult] = None
 
-        # Step 2: Pass enhanced prompt to Fal AI FLUX Pro if configured
-        if self._fal_adapter.is_configured():
+        # Step 2a: Direct Gemini native image generation if an image model is selected (e.g. gemini-3.1-flash-image)
+        target_model = os.getenv("GEMINI_MODEL") or self.configured_model
+        active_key = self.api_key or os.getenv("GEMINI_API_KEY") or settings.gemini_api_key
+        if active_key and any(tok in target_model.lower() for tok in ("image", "nano-banana")):
+            try:
+                logger.info(f"[Gemini-VTO] Attempting direct Gemini image generation with '{target_model}' for job '{job_id}'...")
+                result = await self._try_gemini_image_generation(
+                    model_id=target_model,
+                    api_key=active_key,
+                    person_img=person_img,
+                    garment_img=garment_img,
+                    category=category,
+                    prompt=synthesized_prompt,
+                    job_id=job_id,
+                    output_dir=output_dir,
+                )
+                execution_engine = f"gemini_image:{target_model}"
+            except Exception as img_err:
+                logger.warning(f"[Gemini-VTO] Native image model '{target_model}' failed ({img_err}). Falling back...")
+
+        # Step 2b: Pass enhanced prompt to Fal AI FLUX Pro if configured
+        if result is None and self._fal_adapter.is_configured():
             try:
                 logger.info(f"[Gemini-VTO] Passing Gemini-synthesized prompt to Fal AI FLUX Pro for job '{job_id}'...")
                 result = await self._fal_adapter.infer_async(
