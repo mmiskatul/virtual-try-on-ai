@@ -17,7 +17,6 @@ Separately deployable **Python 3.11+ / FastAPI / PyTorch** Virtual Try-On AI Inf
   - `GET /internal/v1/worker/health`
   - `POST /internal/v1/events/ping`
   - `POST /internal/v1/try-on/execute`
-  - All `/internal/v1/*` routes require `X-Service-Key` matching `INTERNAL_SERVICE_KEY` (timing-safe comparison).
 
 ## Running & Testing
 

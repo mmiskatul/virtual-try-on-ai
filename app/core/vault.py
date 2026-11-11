@@ -4,6 +4,7 @@ Enforces production-grade secret resolution from filesystem mounts (/run/secrets
 and environment variables, with strict entropy validation and zero hardcoded production fallbacks.
 """
 import os
+import secrets
 from typing import Optional, Dict
 
 class SecretsVault:
@@ -63,14 +64,15 @@ class SecretsVault:
                     f"Please configure a cryptographically secure key."
                 )
 
-        # 4. In development/test mode, allow isolated dev fallback
+        # 4. In test mode, generate an isolated ephemeral secret; otherwise require env or secret mount
         if not value:
-            if development_fallback:
+            if os.getenv("ENV", "").lower() == "test":
+                value = secrets.token_hex(32)
+            elif development_fallback:
                 value = development_fallback
-                if os.getenv("ENV", "").lower() != "test":
-                    print(f"[DEV SECRETS WARNING] Using local development fallback for secret '{name}'. Never use this in production!")
+                print(f"[DEV SECRETS WARNING] Using local development fallback for secret '{name}'. Never use this in production!")
             else:
-                raise RuntimeError(f"[SECRETS CONFIG] Secret '{name}' is required but not configured.")
+                raise RuntimeError(f"[SECRETS CONFIG] Secret '{name}' is required but not configured in .env or /run/secrets.")
 
         self._cache[name] = value
         return value

@@ -7,8 +7,12 @@ import os
 import sys
 import time
 import base64
+import secrets
 import pytest
 from PIL import Image, ImageDraw
+
+os.environ.setdefault("ENV", "test")
+os.environ.setdefault("TEST_CRASH_MARKER", f"crash-test-{secrets.token_hex(8)}")
 
 
 # Add parent directory to sys.path
@@ -207,7 +211,7 @@ async def run_tests():
     assert crash_data["error"] == "InternalServerError"
     assert crash_data["code"] == "INTERNAL_SERVER_ERROR"
     assert "errorId" in crash_data, "Expected errorId in response"
-    assert "aiGpuSecretToken9911" not in crash_res.text, "Secret key must NEVER leak to client"
+    assert os.environ["TEST_CRASH_MARKER"] not in crash_res.text, "Secret key must NEVER leak to client"
     assert "Traceback" not in crash_res.text, "Traceback must NEVER leak to client"
     print("[PASS] HTTP Test 11: Graceful Exception Handling (Zero Secret/Traceback Leakage) OK")
 

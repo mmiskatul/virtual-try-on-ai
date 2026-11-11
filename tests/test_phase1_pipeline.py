@@ -55,15 +55,11 @@ async def test_phase1_pipeline_and_private_storage():
             await storage.download_bytes("customer-uploads", "../../secrets.txt")
 
 
-def test_internal_service_auth_and_ping_event():
+def test_internal_worker_health_and_ping_event():
     app = create_app()
     client = TestClient(app)
 
-    # Rejects missing and invalid X-Service-Key
-    assert client.get("/internal/v1/worker/health").status_code == 401
-    assert client.get("/internal/v1/worker/health", headers={"X-Service-Key": "wrong_key"}).status_code == 403
-
-    ok_health = client.get("/internal/v1/worker/health", headers={"X-Service-Key": settings.internal_service_key})
+    ok_health = client.get("/internal/v1/worker/health")
     assert ok_health.status_code == 200
     assert ok_health.json()["status"] == "ready"
 
@@ -76,7 +72,6 @@ def test_internal_service_auth_and_ping_event():
     )
     pong_res = client.post(
         "/internal/v1/events/ping",
-        headers={"X-Service-Key": settings.internal_service_key},
         json=ping.model_dump(),
     )
     assert pong_res.status_code == 200

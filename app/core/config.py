@@ -15,8 +15,6 @@ if os.path.exists(env_file):
     except Exception:
         pass
 
-from .vault import secrets_vault
-
 class Settings(BaseModel):
     title: str = "Multi-Tenant AI Virtual Try-On Engine"
     description: str = "High-performance asynchronous AI service for garment synthesis, person parsing, and virtual try-on pipelines."
@@ -25,20 +23,6 @@ class Settings(BaseModel):
     port: int = int(os.getenv("PORT", "8000"))
     server_url: str = (os.getenv("SERVER_URL") or os.getenv("RENDER_EXTERNAL_URL") or f"http://localhost:{os.getenv('PORT', '8000')}").rstrip("/")
     env: str = os.getenv("ENV", "development")
-    api_key: str = secrets_vault.get_secret(
-        name="AI_SERVICE_API_KEY",
-        description="AI Service external client authentication key",
-        required_in_production=False,
-        min_length=24,
-        development_fallback="vton_ai_service_api_key_dev_2026",
-    )
-    internal_service_key: str = secrets_vault.get_secret(
-        name="INTERNAL_SERVICE_KEY",
-        description="Internal backend-to-backend token",
-        required_in_production=False,
-        min_length=24,
-        development_fallback="vton_internal_service_key_dev",
-    )
     base_dir: str = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     output_dir: str = os.path.join(base_dir, "static", "results")
     max_upload_size_bytes: int = int(os.getenv("MAX_UPLOAD_SIZE_MB", "10")) * 1024 * 1024

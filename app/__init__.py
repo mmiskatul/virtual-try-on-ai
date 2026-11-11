@@ -70,7 +70,8 @@ def create_app() -> FastAPI:
     if settings.env == "test":  # never expose the crash-test route on a deployed service
         @app.get("/test/crash")
         async def test_crash():
-            raise RuntimeError("Secret AI GPU cluster key in stack trace: aiGpuSecretToken9911")
+            marker = os.getenv("TEST_CRASH_MARKER", "ephemeral-crash-marker")
+            raise RuntimeError(f"Crash simulation stack marker: {marker}")
 
     return app
 
