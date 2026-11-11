@@ -63,7 +63,7 @@ def create_app() -> FastAPI:
     app.include_router(create_try_on_router(job_manager))
     app.include_router(create_metrics_router(job_manager))
 
-    if settings.env in ("test", "development"):
+    if settings.env == "test":  # never expose the crash-test route on a deployed service
         @app.get("/test/crash")
         async def test_crash():
             raise RuntimeError("Secret AI GPU cluster key in stack trace: aiGpuSecretToken9911")

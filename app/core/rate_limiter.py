@@ -67,7 +67,7 @@ class RateLimiterMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next) -> Response:
         # Exclude health probe from rate limits
-        if request.url.path == "/health":
+        if request.url.path in ("/", "/health"):
             return await call_next(request)
 
         allowed, limit, remaining, reset_sec = self.limiter.check(request)
