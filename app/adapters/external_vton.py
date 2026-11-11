@@ -55,6 +55,10 @@ class ExternalVtonApiAdapter(BaseTryOnAdapter):
             return False, f"Unsupported category '{category}'. Supported: {self.supported_categories}"
         return True, None
 
+    def preprocess(self, person_img: Image.Image, garment_img: Image.Image) -> tuple[Image.Image, Image.Image]:
+        # The external provider performs its own preprocessing; pass images through unchanged.
+        return person_img, garment_img
+
     def _image_to_base64_data_uri(self, img: Image.Image) -> str:
         buffered = io.BytesIO()
         img.convert("RGB").save(buffered, format="JPEG", quality=92)
