@@ -15,12 +15,6 @@ from typing import Dict, Any, Optional, List
 import httpx
 from PIL import Image
 
-try:
-    import google.generativeai as genai
-    GENAI_AVAILABLE = True
-except ImportError:
-    GENAI_AVAILABLE = False
-
 from .base import BaseTryOnAdapter, TryOnResult
 from .viton_hd import ProductionVitonHDAdapter
 from .fal_vton import FalFluxVtoAdapter
@@ -58,11 +52,6 @@ class GeminiVtonOrchestratorAdapter(BaseTryOnAdapter):
         self.configured_model = model_name or settings.gemini_model or "gemini-3.6-flash"
         self._viton_fallback = ProductionVitonHDAdapter()
         self._fal_adapter = FalFluxVtoAdapter()
-        if self.api_key and GENAI_AVAILABLE:
-            try:
-                genai.configure(api_key=self.api_key)
-            except Exception as e:
-                logger.warning(f"[Gemini] genai.configure warning: {e}")
 
     @property
     def name(self) -> str:
@@ -100,12 +89,11 @@ class GeminiVtonOrchestratorAdapter(BaseTryOnAdapter):
         Multimodal analysis: inspects person and garment to craft an expert synthesis prompt.
         Returns: (synthesized_prompt, active_gemini_model_name)
         """
-        if not GENAI_AVAILABLE or not self.is_configured():
+        if not self.is_configured():
             fallback_prompt = user_prompt or f"A natural front-facing studio shot. The {category} garment is worn naturally."
             return fallback_prompt, "local_rule_fallback"
 
         active_key = self.api_key or os.getenv("GEMINI_API_KEY") or settings.gemini_api_key
-        genai.configure(api_key=active_key)
 
         orchestration_prompt = f"""
 Analyze these two images. Write a highly detailed, descriptive prompt for a photorealistic fashion virtual try-on fitting:
@@ -125,20 +113,36 @@ Output ONLY the final image generation prompt. Do not include introductory text 
             [target_model] + [m for m in self.CANDIDATE_MODELS if m != target_model]
         )
 
-        loop = asyncio.get_event_loop()
-        for m_name in models_to_try:
-            try:
-                def _call_gemini():
-                    model = genai.GenerativeModel(m_name)
-                    res = model.generate_content([orchestration_prompt, person_img, garment_img])
-                    return res.text.strip() if res and res.text else None
+        payload = {
+            "contents": [{
+                "parts": [
+                    {"text": orchestration_prompt},
+                    {"inlineData": {"mimeType": "image/png", "data": self._pil_to_b64(person_img)}},
+                    {"inlineData": {"mimeType": "image/png", "data": self._pil_to_b64(garment_img)}},
+                ]
+            }]
+        }
 
-                generated_text = await loop.run_in_executor(None, _call_gemini)
-                if generated_text:
-                    logger.info(f"[Gemini Vision] Successfully synthesized prompt using {m_name}: '{generated_text[:120]}...'")
-                    return generated_text, m_name
-            except Exception as gemini_err:
-                logger.warning(f"[Gemini Vision] Model {m_name} encountered error: {gemini_err}. Trying fallback model...")
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            for m_name in models_to_try:
+                try:
+                    url = f"https://generativelanguage.googleapis.com/v1beta/models/{m_name}:generateContent"
+                    resp = await client.post(
+                        url,
+                        headers={"x-goog-api-key": active_key, "Content-Type": "application/json"},
+                        json=payload,
+                    )
+                    if resp.status_code != 200:
+                        raise RuntimeError(f"HTTP {resp.status_code}: {resp.text[:200]}")
+
+                    data = resp.json()
+                    parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+                    generated_text = "".join(p.get("text", "") for p in parts if isinstance(p, dict)).strip()
+                    if generated_text:
+                        logger.info(f"[Gemini Vision] Successfully synthesized prompt using {m_name}: '{generated_text[:120]}...'")
+                        return generated_text, m_name
+                except Exception as gemini_err:
+                    logger.warning(f"[Gemini Vision] Model {m_name} encountered error: {gemini_err}. Trying fallback model...")
 
         # If all Gemini models fail or are rate-limited, return safe fallback prompt
         fallback_prompt = user_prompt or f"A natural front-facing studio shot. The {category} garment is worn naturally with realistic fabric drape."
@@ -202,6 +206,7 @@ Output ONLY the final image generation prompt. Do not include introductory text 
                     job_id=job_id,
                     status="COMPLETED",
                     output_image_path=out_path,
+                    output_url=f"{settings.server_url.rstrip('/')}/static/results/{os.path.basename(out_path)}",
                     model_name=self.name,
                     model_version=self.version,
                     latency_ms=(time.time() - t0) * 1000,

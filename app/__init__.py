@@ -6,7 +6,7 @@ from fastapi.staticfiles import StaticFiles
 from .core.config import settings
 from .core.sanitizer import InputSanitizerMiddleware
 from .core.rate_limiter import RateLimiterMiddleware
-from .core.cors_config import CORS_ORIGIN_REGEX, ALLOWED_METHODS, ALLOWED_HEADERS, EXPOSED_HEADERS
+from .core.cors_config import CORS_ORIGIN_REGEX, ALLOWED_METHODS, ALLOWED_HEADERS, EXPOSED_HEADERS, get_explicit_origins
 from .core.error_handler import setup_exception_handlers
 from .core.observability import ObservabilityMiddleware, create_observability_router
 from .adapters.registry import ModelRegistry
@@ -35,6 +35,7 @@ def create_app() -> FastAPI:
     # 3. Strict CORS Middleware
     app.add_middleware(
         CORSMiddleware,
+        allow_origins=get_explicit_origins(),
         allow_origin_regex=CORS_ORIGIN_REGEX,
         allow_credentials=True,
         allow_methods=ALLOWED_METHODS,

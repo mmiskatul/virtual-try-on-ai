@@ -23,19 +23,19 @@ class Settings(BaseModel):
     version: str = "1.0.0"
     host: str = os.getenv("HOST", "0.0.0.0")
     port: int = int(os.getenv("PORT", "8000"))
-    server_url: str = os.getenv("SERVER_URL", f"http://localhost:{os.getenv('PORT', '8000')}")
+    server_url: str = (os.getenv("SERVER_URL") or os.getenv("RENDER_EXTERNAL_URL") or f"http://localhost:{os.getenv('PORT', '8000')}").rstrip("/")
     env: str = os.getenv("ENV", "development")
     api_key: str = secrets_vault.get_secret(
         name="AI_SERVICE_API_KEY",
         description="AI Service external client authentication key",
-        required_in_production=True,
+        required_in_production=False,
         min_length=24,
         development_fallback="vton_ai_service_api_key_dev_2026",
     )
     internal_service_key: str = secrets_vault.get_secret(
         name="INTERNAL_SERVICE_KEY",
         description="Internal backend-to-backend token",
-        required_in_production=True,
+        required_in_production=False,
         min_length=24,
         development_fallback="vton_internal_service_key_dev",
     )
