@@ -31,7 +31,7 @@ class FalFluxVtoAdapter(BaseTryOnAdapter):
     Submits human image, garment image, and styling prompts to Fal AI cloud endpoint.
     """
 
-    MODEL_ID = "fal-ai/flux-pro/v1/vto"
+    MODEL_ID = settings.fal_model  # from FAL_MODEL in .env
 
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or settings.fal_key or settings.vton_api_key

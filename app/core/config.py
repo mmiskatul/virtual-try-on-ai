@@ -52,6 +52,7 @@ class Settings(BaseModel):
 
     # External AI Virtual Try-On API (Cloud Provider: Fal.ai, Fashn.ai, Replicate, Kling, Segmind, or custom)
     fal_key: Optional[str] = os.getenv("FAL_KEY") or os.getenv("FAL_API_KEY")
+    fal_model: str = os.getenv("FAL_MODEL", "fal-ai/flux-pro/v1/vto")
     vton_api_key: Optional[str] = os.getenv("VTON_API_KEY") or os.getenv("FAL_KEY") or os.getenv("FASHN_API_KEY") or os.getenv("REPLICATE_API_TOKEN") or os.getenv("KLING_API_KEY")
     vton_api_url: Optional[str] = os.getenv("VTON_API_URL")
     vton_provider: str = os.getenv("VTON_PROVIDER", "auto")
