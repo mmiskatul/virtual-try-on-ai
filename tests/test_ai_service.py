@@ -12,6 +12,7 @@ import pytest
 from PIL import Image, ImageDraw
 
 os.environ.setdefault("ENV", "test")
+os.environ.setdefault("ALLOW_UNAUTHENTICATED_DEV", "true")  # the existing suite exercises the engine without a key
 os.environ.setdefault("TEST_CRASH_MARKER", f"crash-test-{secrets.token_hex(8)}")
 
 
