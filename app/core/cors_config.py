@@ -6,8 +6,8 @@ import os
 import re
 from typing import List
 
-# Allowed regex pattern for development ports and production Vercel / custom domains
-CORS_ORIGIN_REGEX = r"^(https?://(localhost|127\.0\.0\.1)(:\d+)?|https://([a-zA-Z0-9-]+\.)?(vercel\.app|vton-platform\.io))$"
+# Allowed regex pattern for development ports and the official vtrystudio.com domains
+CORS_ORIGIN_REGEX = r"^(https?://(localhost|127\.0\.0\.1)(:\d+)?|https://([a-zA-Z0-9-]+\.)*vtrystudio\.com)$"
 
 # Parse explicit allowed origins from environment if provided
 def get_explicit_origins() -> List[str]:
@@ -18,7 +18,11 @@ def get_explicit_origins() -> List[str]:
         "http://localhost:3000",
         "http://localhost:3001",
         "http://localhost:3002",
-        "https://vton-platform.io",
+        "https://vtrystudio.com",
+        "https://www.vtrystudio.com",
+        "https://shop.brand.vtrystudio.com",
+        "https://admin.vtrystudio.com",
+        "https://api.vtrystudio.com",
     ]
     return list(set(origins + default_origins))
 
